@@ -1,0 +1,34 @@
+name: Deploy Satellite
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g bun
+      - run: bun install
+      - run: bun run build
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Notify Joy Engine
+        env:
+          WEBHOOK_URL: ${{ secrets.JOY_ENGINE_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.JOY_ENGINE_WEBHOOK_SECRET }}
+        run: |
+          PAYLOAD="{\"event\":\"satellite.deployed\",\"repo\":\"${{ github.repository }}\",\"sha\":\"${{ github.sha }}\"}"
+          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
+          curl -fsS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: sha256=$SIG" \
+            -d "$PAYLOAD" || true
