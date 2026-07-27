@@ -16,11 +16,12 @@ jobs:
       - run: npm install -g bun
       - run: bun install
       - run: bun run build
-      - name: Deploy to Cloudflare
+      - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ github.event.repository.name }} --branch=main
       - name: Notify Joy Engine
         env:
           WEBHOOK_URL: ${{ secrets.JOY_ENGINE_WEBHOOK_URL }}
