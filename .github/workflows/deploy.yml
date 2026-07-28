@@ -1,34 +1,56 @@
-name: Deploy Satellite
+name: Build & Deploy to Cloudflare Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      build_job_id:
+        description: "Joy Engine build_job_id"
+        required: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '20'
-      - run: npm install -g bun
-      - run: bun install
-      - run: bun run build
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
       - name: Deploy to Cloudflare Pages
+        id: deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=${{ github.event.repository.name }} --branch=main
+
       - name: Notify Joy Engine
+        if: always()
         env:
           WEBHOOK_URL: ${{ secrets.JOY_ENGINE_WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.JOY_ENGINE_WEBHOOK_SECRET }}
+          BUILD_JOB_ID: ${{ github.event.inputs.build_job_id }}
+          STATUS: ${{ job.status }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          PAYLOAD="{\"event\":\"satellite.deployed\",\"repo\":\"${{ github.repository }}\",\"sha\":\"${{ github.sha }}\"}"
-          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
+          PAYLOAD=$(jq -nc \
+            --arg id "$BUILD_JOB_ID" \
+            --arg status "$STATUS" \
+            --arg url "$PREVIEW_URL" \
+            --arg sha "$COMMIT_SHA" \
+            '{build_job_id:$id, status:(if $status=="success" then "deployed" else "failed" end), preview_url:$url, commit_sha:$sha}')
+          SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
           curl -fsS -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "X-Signature: sha256=$SIG" \
